@@ -1,0 +1,55 @@
+# Configuración de integración con el ecosistema completo de microservicios.
+#
+# Requisito previo (una sola vez):
+#   docker network create "${PDF_ECOSYSTEM_NETWORK:-pdf-ecosystem-net}"
+#
+# Los demás servicios deben unirse a la misma red externa añadiendo en su
+# docker-compose.yml:
+#
+#   networks:
+#     pdf-ecosystem:
+#       external: true
+#       name: ${PDF_ECOSYSTEM_NETWORK:-pdf-ecosystem-net}
+#
+# Los nombres DNS derivan de los docker-compose.yml reales:
+#   - pdf-validation (microservicio Validation)
+#   - extract (microservicio Extract, con nginx en el puerto 8000)
+#   - pdf-persistence (microservicio Persistence, puerto 8003)
+
+services:
+  pdf-summarize:
+    build: .
+    environment:
+      MAX_PDF_SIZE_MIB: "${MAX_PDF_SIZE_MIB:-20}"
+      VALIDATION_SERVICE_URL: "${VALIDATION_SERVICE_URL:-http://pdf-validation:8000}"
+      EXTRACT_SERVICE_URL: "${EXTRACT_SERVICE_URL:-http://extract:8000}"
+      PERSISTENCE_SERVICE_URL: "${PERSISTENCE_SERVICE_URL:-http://pdf-persistence:8003}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-meta/llama-3.1-8b-instruct}"
+      LLM_TIMEOUT_SECONDS: "${LLM_TIMEOUT_SECONDS:-60}"
+      LLM_MAX_TOKENS: "${LLM_MAX_TOKENS:-1000}"
+      UPSTREAM_TIMEOUT_SECONDS: "${UPSTREAM_TIMEOUT_SECONDS:-30}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=4)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - pdf-ecosystem
+
+networks:
+  pdf-ecosystem:
+    external: true
+    name: ${PDF_ECOSYSTEM_NETWORK:-pdf-ecosystem-net}
