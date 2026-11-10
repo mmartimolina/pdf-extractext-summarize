@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import socket
 import urllib.error
 import urllib.request
@@ -90,8 +91,9 @@ class ConsulResolver:
             if not entries:
                 logger.warning("consul_no_healthy_instances service=%s", service_name)
                 return fallback_url.rstrip("/")
-            service = entries[0].get("Service", {})
-            node = entries[0].get("Node", {})
+            instance = random.choice(entries)
+            service = instance.get("Service", {})
+            node = instance.get("Node", {})
             host = service.get("Address") or node.get("Address")
             port = service.get("Port")
             if not host or not port:
