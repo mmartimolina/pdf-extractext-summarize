@@ -1,50 +1,33 @@
-"""Puertos (interfaces) que la capa de negocio requiere de la infraestructura.
-
-Permiten sustituir los clientes reales por dobles de prueba sin acoplar
-la capa de aplicación a HTTP o a un proveedor concreto.
-"""
+"""Puertos (interfaces) que la capa de negocio requiere de la infraestructura."""
 
 from typing import Protocol
 
-from pdf_summarize.domain.models import (
-    DocumentRecord,
-    ExtractionResult,
-    ValidationReport,
-)
+from pdf_summarize.domain.models import DocumentRecord, ExtractionResult, ValidationReport
 
 
 class Validator(Protocol):
-    """Puerto del microservicio Validation."""
-
-    async def validate(self, pdf_bytes: bytes, request_id: str) -> ValidationReport:
-        """Valida el PDF y devuelve el informe con el checksum."""
-        ...
+    async def validate(self, pdf_bytes: bytes, request_id: str) -> ValidationReport: ...
 
 
 class Extractor(Protocol):
-    """Puerto del microservicio Extract."""
-
-    async def extract(self, pdf_bytes: bytes, request_id: str) -> ExtractionResult:
-        """Extrae el texto del PDF."""
-        ...
+    async def extract(self, pdf_bytes: bytes, request_id: str) -> ExtractionResult: ...
 
 
 class Summarizer(Protocol):
-    """Puerto del proveedor de modelos de lenguaje."""
-
     @property
-    def model_name(self) -> str:
-        """Identificador del modelo configurado."""
-        ...
+    def model_name(self) -> str: ...
 
-    async def summarize(self, prompt: str) -> str:
-        """Genera el resumen a partir del prompt."""
-        ...
+    async def summarize(self, prompt: str) -> str: ...
 
 
 class Persister(Protocol):
-    """Puerto del microservicio Persistence."""
+    """Puerto de Persistence con operaciones de SAGA y compensación."""
+
+    async def begin(self, checksum: str, checksum_algorithm: str, request_id: str) -> None:
+        """Reserva un documento en estado PENDING; es el primer paso con efecto."""
 
     async def save(self, record: DocumentRecord, request_id: str) -> None:
-        """Registra el documento procesado de forma idempotente."""
-        ...
+        """Confirma el documento como COMPLETED."""
+
+    async def compensate(self, checksum: str, request_id: str) -> None:
+        """Compensa la reserva mediante eliminación lógica."""
