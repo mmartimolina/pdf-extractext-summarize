@@ -15,14 +15,13 @@ import logging
 
 import httpx
 
-from pdf_summarize.infrastructure.consul import ConsulResolver
-
 from pdf_summarize.domain.errors import (
     PersistenceConflictError,
     PersistenceRejectedError,
     PersistenceUnavailableError,
 )
 from pdf_summarize.domain.models import DocumentRecord
+from pdf_summarize.infrastructure.consul import ConsulResolver
 
 logger = logging.getLogger("pdf_summarize.persistence_client")
 
