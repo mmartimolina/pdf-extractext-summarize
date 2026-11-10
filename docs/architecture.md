@@ -2,80 +2,76 @@
 
 ## Responsabilidad
 
-`pdf-summarize` coordina la sumarización de un documento PDF delegando
-en los microservicios existentes del ecosistema:
+`pdf-summarize` coordina la sumarización de un documento PDF:
 
-1. **Validation** verifica el PDF y calcula el checksum del contenido.
-2. **Extract** obtiene el texto del documento.
-3. Un **proveedor de IA configurable** (API compatible con OpenAI; por
-   defecto la API de NVIDIA usada en el proyecto original) genera el resumen.
-4. **Persistence** registra el documento procesado (checksum, texto,
-   resumen y metadatos) de forma idempotente por checksum.
+1. **Validation** verifica el PDF y calcula el checksum.
+2. **Persistence** reserva el checksum en estado `PENDING` con el identificador de SAGA.
+3. **Extract** obtiene el texto del documento.
+4. Un **proveedor de IA configurable** genera el resumen.
+5. **Persistence** confirma el registro como `COMPLETED`.
 
-El servicio no valida PDFs, no extrae texto ni accede a bases de datos:
-solo orquesta. Persistence se consume mediante HTTP (`POST /documents`),
-sin mezclar lógica de base de datos en este servicio.
+El servicio no valida PDFs, no extrae texto ni accede directamente a bases de datos.
+Persistence se consume por HTTP. El caso de uso actúa como orquestador SAGA y
+ejecuta una compensación (eliminación lógica) si falla un paso posterior a la
+reserva.
 
 ## Capas
 
 ```
 src/pdf_summarize/
 ├── api/                  # Presentación
-│   ├── routes.py         # POST /summarize, /health/*, /metrics
-│   ├── middleware.py     # X-Request-ID, observabilidad (logs + métricas)
-│   ├── error_handlers.py # Manejo centralizado de excepciones → JSON
-│   └── metrics.py        # Contadores e histogramas Prometheus
-├── service/              # Aplicación / negocio
-│   ├── summarize_use_case.py  # Coordinación del flujo
-│   └── prompts.py             # Construcción del prompt (aislada y testeable)
-├── domain/               # Núcleo independiente de frameworks
-│   ├── errors.py         # Excepciones con código estable y estado HTTP
-│   ├── models.py         # ValidationReport, ExtractionResult, SummaryResult,
-│   │                     # DocumentRecord
-│   └── ports.py          # Protocolos: Validator, Extractor, Summarizer, Persister
-├── infrastructure/       # Infraestructura
-│   ├── validation_client.py  # Cliente HTTP de Validation
-│   ├── extract_client.py     # Cliente HTTP de Extract
-│   ├── persistence_client.py # Cliente HTTP de Persistence
-│   └── llm_client.py         # Cliente del proveedor de IA
-├── container.py          # DI: construcción y cierre ordenado de clientes
-├── app.py                # Fábrica de la aplicación FastAPI (lifespan)
+├── service/              # Aplicación: orquestador SAGA y prompts
+├── domain/               # Modelos, errores y puertos
+├── infrastructure/       # Clientes HTTP, Consul y resiliencia
+├── container.py          # Inyección y cierre ordenado de dependencias
+├── app.py                # Fábrica FastAPI (lifespan)
 ├── config.py             # Settings desde variables de entorno
-├── logging_config.py     # Logs JSON a stdout
-├── schemas.py            # Contrato HTTP (entrada/salida)
 └── main.py               # Punto de entrada uvicorn
 ```
 
-**Presentación → negocio → infraestructura**: los controladores no
-contienen lógica de negocio; el caso de uso depende de **puertos**
-(`domain/ports.py`) implementados por la infraestructura; las pruebas
-sustituyen los clientes por dobles sin tocar HTTP real.
+**Presentación → negocio → infraestructura**: los controladores no contienen
+lógica de negocio; el caso de uso depende de puertos implementados por la
+infraestructura. Las pruebas sustituyen los clientes por dobles.
 
-## Flujo de `POST /summarize`
+## Flujo SAGA de `POST /summarize`
 
 ```
-Cliente ──PDF binario──▶ /summarize
-   │  content-type/size/empty (presentación)
-   ├─▶ ValidationClient.validate()  → checksum, tamaño  (HTTP, timeout)
-   ├─▶ ExtractClient.extract()      → texto, páginas     (HTTP, timeout)
-   │  texto útil ≥ 50 chars (regla de negocio)
-   ├─▶ build_summary_prompt()       → prompt             (puro, testeable)
-    ├─▶ LLMClient.summarize()        → resumen            (HTTP, timeout)
-    ├─▶ PersistenceClient.save()     → registro idempotente (HTTP, timeout)
-    └─▶ 200 JSON: summary + metadatos + request_id
+Cliente ──PDF──▶ SummarizeUseCase
+                   │
+                   ├─▶ Validation.validate() ──▶ checksum
+                   │
+                   ├─▶ Persistence.begin() ────▶ reserva PENDING
+                   │
+                   ├─▶ Extract.extract() ──────▶ texto y páginas
+                   │
+                   ├─▶ LLM.summarize() ────────▶ resumen
+                   │
+                   ├─▶ Persistence.save() ─────▶ COMPLETED
+                   │
+                   └─▶ respuesta 200
+                   
+Si falla Extract, LLM o la confirmación:
+                   └─▶ Persistence.compensate()
+                         └─▶ DELETE lógico de la reserva
 ```
 
-Cada fallo se traduce a una excepción de dominio con código estable
-(`docs/integration-contracts.md` lista los códigos) y el manejador
-central la convierte en JSON uniforme.
+La reserva incluye `metadata.saga_id=request_id` y
+`metadata.saga_status=PENDING`. La confirmación cambia el estado a
+`COMPLETED`. Si la compensación falla, se conserva el error original, se
+registra `saga_compensation_failed` y el registro PENDING queda identificable
+para reconciliación operativa.
+
+## Resiliencia y descubrimiento
+
+- Los clientes internos utilizan Retry con backoff y Circuit Breaker.
+- Persistence admite POST, PUT y DELETE a través del mismo cliente resiliente.
+- Consul descubre instancias saludables; se conserva una URL fallback.
+- Rate Limit y caché LRU/TTL son locales a cada proceso, no distribuidos.
 
 ## Decisiones
 
-- **httpx asíncrono** con timeouts explícitos y cierre en `lifespan`:
-  concurrencia sin bloquear (12-Factor, procesos/disposabilidad).
-- **prometheus-client** para `/metrics`: integración simple y verificable;
-  OpenTelemetry queda como paso futuro cuando se necesite trazas distribuidas.
-- **Sin reintentos** en llamadas externas: los errores se responden de
-  forma controlada; quien llama decide reintentar (KISS, YAGNI).
-- **Pruebas** con dobles (fakes + `httpx.MockTransport` + transporte ASGI):
-  nunca se llama al modelo de IA ni a los microservicios reales.
+- **httpx asíncrono** con timeouts explícitos y cierre en `lifespan`.
+- **prometheus-client** para exponer métricas en `/metrics`.
+- **Pruebas** con dobles, `httpx.MockTransport` y transporte ASGI; no llaman
+  al proveedor LLM ni a microservicios reales.
+- La SAGA no requiere transacción distribuida ni base de datos compartida.
