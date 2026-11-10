@@ -12,8 +12,6 @@ import logging
 
 import httpx
 
-from pdf_summarize.infrastructure.consul import ConsulResolver
-
 from pdf_summarize.domain.errors import (
     EmptyPdfError,
     PdfTooLargeError,
@@ -23,6 +21,7 @@ from pdf_summarize.domain.errors import (
     ValidationUnavailableError,
 )
 from pdf_summarize.domain.models import ValidationReport
+from pdf_summarize.infrastructure.consul import ConsulResolver
 
 logger = logging.getLogger("pdf_summarize.validation_client")
 
