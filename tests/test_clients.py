@@ -337,7 +337,13 @@ class TestPersistenceClient:
 
     async def test_conflict_409_maps_to_conflict(self):
         client = self.make_client(lambda r: httpx.Response(
-            409, json={"error": {"code": "DOCUMENT_ALREADY_EXISTS", "message": "conflicto"}}
+            409,
+            json={
+                "error": {
+                    "code": "DOCUMENT_ALREADY_EXISTS",
+                    "message": "conflicto",
+                }
+            },
         ))
         with pytest.raises(PersistenceConflictError):
             await client.begin("ab" * 32, "sha256", "req-5")
