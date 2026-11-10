@@ -65,9 +65,10 @@ class FakeLLMClient:
 
 
 class FakePersistenceClient:
-    def __init__(self, error=None, save_error=None):
+    def __init__(self, error=None, save_error=None, compensation_error=None):
         self._error = error
         self._save_error = save_error
+        self._compensation_error = compensation_error
         self.begins = []
         self.calls = []
         self.compensations = []
@@ -84,6 +85,8 @@ class FakePersistenceClient:
 
     async def compensate(self, checksum, request_id):
         self.compensations.append((checksum, request_id))
+        if self._compensation_error:
+            raise self._compensation_error
 
 
 def build_use_case(
@@ -241,6 +244,18 @@ class TestPersistenceStep:
             await use_case.execute(b"%PDF-fake", request_id="req-1")
         assert len(persistence.calls) == 1
         assert len(persistence.compensations) == 1
+
+    async def test_original_error_is_preserved_when_compensation_fails(self):
+        persistence = FakePersistenceClient(
+            compensation_error=PersistenceUnavailableError("compensation down")
+        )
+        use_case = build_use_case(
+            llm=FakeLLMClient(error=LLMAuthError("401")),
+            persistence=persistence,
+        )
+        with pytest.raises(LLMAuthError):
+            await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.compensations == [("deadbeef", "req-1")]
 
     async def test_reservation_is_compensated_when_llm_fails(self):
         persistence = FakePersistenceClient()
