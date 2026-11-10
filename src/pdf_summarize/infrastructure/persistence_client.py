@@ -15,6 +15,8 @@ import logging
 
 import httpx
 
+from pdf_summarize.infrastructure.consul import ConsulResolver
+
 from pdf_summarize.domain.errors import (
     PersistenceConflictError,
     PersistenceRejectedError,
@@ -28,12 +30,20 @@ logger = logging.getLogger("pdf_summarize.persistence_client")
 class PersistenceClient:
     """Adaptador del puerto ``Persister`` sobre HTTP."""
 
-    def __init__(self, http: httpx.AsyncClient, base_url: str) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, base_url: str, resolver: ConsulResolver | None = None
+    ) -> None:
         self._http = http
         self._base_url = base_url.rstrip("/")
+        self._resolver = resolver
 
     async def save(self, record: DocumentRecord, request_id: str) -> None:
         """Registra el documento procesado; idempotente por checksum."""
+        base_url = (
+            await self._resolver.resolve("pdf-persistence", self._base_url)
+            if self._resolver is not None
+            else self._base_url
+        )
         payload = {
             "checksum": record.checksum,
             "checksum_algorithm": record.checksum_algorithm,
@@ -45,7 +55,7 @@ class PersistenceClient:
         }
         try:
             response = await self._http.post(
-                f"{self._base_url}/documents",
+                f"{base_url}/documents",
                 json=payload,
                 headers={"X-Request-ID": request_id},
             )
