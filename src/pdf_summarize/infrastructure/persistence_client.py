@@ -55,6 +55,8 @@ class PersistenceClient:
                 metadata = response.json().get("metadata") or {}
             except (ValueError, AttributeError):
                 metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
             if (
                 metadata.get("saga_id") == request_id
                 and metadata.get("saga_status") == "PENDING"
