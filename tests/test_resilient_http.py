@@ -1,7 +1,5 @@
 """Pruebas del cliente HTTP resiliente."""
 
-import asyncio
-
 import httpx
 import pytest
 
@@ -33,7 +31,7 @@ async def test_reintenta_respuesta_transitoria_y_recupera() -> None:
 
 
 @pytest.mark.asyncio
-async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion() -> None:
+async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion(monkeypatch) -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -42,12 +40,17 @@ async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion() -> None:
         status = 503 if calls == 1 else 200
         return httpx.Response(status, request=request)
 
+    clock = [100.0]
+    monkeypatch.setattr(
+        "pdf_summarize.infrastructure.resilient_http.time.monotonic",
+        lambda: clock[0],
+    )
     raw = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = ResilientHttpClient(
         raw,
         max_attempts=1,
         failure_threshold=1,
-        recovery_timeout=0.05,
+        recovery_timeout=20,
     )
 
     first = await client.post("http://dependency.test/operation")
@@ -56,7 +59,7 @@ async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion() -> None:
     with pytest.raises(CircuitOpenError):
         await client.post("http://dependency.test/operation")
 
-    await asyncio.sleep(0.06)
+    clock[0] += 21
     recovered = await client.post("http://dependency.test/operation")
     assert recovered.status_code == 200
     assert calls == 2
