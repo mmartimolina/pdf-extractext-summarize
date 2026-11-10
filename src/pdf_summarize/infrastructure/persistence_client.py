@@ -15,7 +15,10 @@ class PersistenceClient:
     """Operaciones idempotentes de reserva, confirmación y compensación."""
 
     def __init__(
-        self, http: httpx.AsyncClient, base_url: str, resolver: ConsulResolver | None = None
+        self,
+        http: httpx.AsyncClient,
+        base_url: str,
+        resolver: ConsulResolver | None = None,
     ) -> None:
         self._http = http
         self._base_url = base_url.rstrip("/")
@@ -28,7 +31,9 @@ class PersistenceClient:
             else self._base_url
         )
 
-    async def begin(self, checksum: str, checksum_algorithm: str, request_id: str) -> None:
+    async def begin(
+        self, checksum: str, checksum_algorithm: str, request_id: str
+    ) -> None:
         """Crea la reserva PENDING identificada por la solicitud."""
         payload = {
             "checksum": checksum,
