@@ -1,4 +1,4 @@
-"""Caso de uso: coordina Validation, Extract, el modelo IA y Persistence."""
+"""Orquestador SAGA del flujo de sumarización de un PDF."""
 
 import logging
 
@@ -8,18 +8,15 @@ from pdf_summarize.domain.ports import Extractor, Persister, Summarizer, Validat
 from pdf_summarize.service.prompts import build_summary_prompt
 
 logger = logging.getLogger("pdf_summarize.summarize")
-
-#: Longitud mínima (en caracteres) para considerar el texto útil.
 DEFAULT_MIN_TEXT_LENGTH = 50
 
 
 class SummarizeUseCase:
-    """Orquesta el flujo completo de sumarización de un PDF.
+    """Coordina pasos y compensaciones de la SAGA.
 
-    No duplica la lógica de validación, extracción ni persistencia:
-    delega en los puertos de infraestructura y aplica únicamente las
-    reglas propias (texto útil, construcción del prompt, composición
-    del resultado y registro del documento una vez resumido).
+    SAGA: Validation → reserva PENDING → Extract → LLM → confirmación
+    COMPLETED. Si falla cualquier paso posterior a la reserva, se ejecuta
+    la compensación mediante eliminación lógica en Persistence.
     """
 
     def __init__(
@@ -37,57 +34,63 @@ class SummarizeUseCase:
         self._min_text_length = min_text_length
 
     async def execute(self, pdf_bytes: bytes, request_id: str) -> SummaryResult:
-        """Ejecuta el flujo de sumarización.
-
-        Args:
-            pdf_bytes: contenido binario del PDF.
-            request_id: identificador correlacionable de la solicitud.
-
-        Returns:
-            SummaryResult con el resumen y los metadatos verificados.
-
-        Raises:
-            EmptyPdfError: si la entrada está vacía.
-            NoUsefulTextError: si la extracción no produjo texto útil.
-            Errores de dominio propagados de las dependencias.
-        """
         if not pdf_bytes:
             raise EmptyPdfError()
 
-        report = await self._validation.validate(pdf_bytes, request_id)
-        extraction = await self._extract.extract(pdf_bytes, request_id)
+        checksum: str | None = None
+        reservation_started = False
+        try:
+            report = await self._validation.validate(pdf_bytes, request_id)
+            checksum = report.checksum
 
-        if len(extraction.content.strip()) < self._min_text_length:
-            raise NoUsefulTextError()
+            # Paso con efecto persistente: reserva idempotente PENDING.
+            await self._persistence.begin(
+                checksum, report.checksum_algorithm, request_id
+            )
+            reservation_started = True
 
-        prompt = build_summary_prompt(extraction.content)
-        summary = await self._llm.summarize(prompt)
+            extraction = await self._extract.extract(pdf_bytes, request_id)
+            if len(extraction.content.strip()) < self._min_text_length:
+                raise NoUsefulTextError()
 
-        result = SummaryResult(
-            summary=summary,
-            page_count=extraction.page_count,
-            file_size_bytes=report.file_size_bytes,
-            checksum=report.checksum,
-            checksum_algorithm=report.checksum_algorithm,
-            model=self._llm.model_name,
-        )
+            summary = await self._llm.summarize(
+                build_summary_prompt(extraction.content)
+            )
+            result = SummaryResult(
+                summary=summary,
+                page_count=extraction.page_count,
+                file_size_bytes=report.file_size_bytes,
+                checksum=report.checksum,
+                checksum_algorithm=report.checksum_algorithm,
+                model=self._llm.model_name,
+            )
+            record = DocumentRecord(
+                checksum=result.checksum,
+                checksum_algorithm=result.checksum_algorithm,
+                text=extraction.content,
+                summary=result.summary,
+                page_count=result.page_count,
+                file_size_bytes=result.file_size_bytes,
+                model=result.model,
+            )
 
-        record = DocumentRecord(
-            checksum=result.checksum,
-            checksum_algorithm=result.checksum_algorithm,
-            text=extraction.content,
-            summary=result.summary,
-            page_count=result.page_count,
-            file_size_bytes=result.file_size_bytes,
-            model=result.model,
-        )
-        await self._persistence.save(record, request_id)
-
-        logger.info(
-            "summarize_ok request_id=%s pages=%d size=%d checksum=%s",
-            request_id,
-            extraction.page_count,
-            report.file_size_bytes,
-            report.checksum,
-        )
-        return result
+            # Confirmación: PENDING → COMPLETED.
+            await self._persistence.save(record, request_id)
+            logger.info("saga_completed request_id=%s checksum=%s", request_id, checksum)
+            return result
+        except Exception:
+            if reservation_started and checksum is not None:
+                try:
+                    await self._persistence.compensate(checksum, request_id)
+                    logger.warning(
+                        "saga_compensated request_id=%s checksum=%s",
+                        request_id, checksum,
+                    )
+                except Exception:
+                    # Se conserva el error original; PENDING queda identificable
+                    # para una reconciliación operativa posterior.
+                    logger.exception(
+                        "saga_compensation_failed request_id=%s checksum=%s",
+                        request_id, checksum,
+                    )
+            raise
