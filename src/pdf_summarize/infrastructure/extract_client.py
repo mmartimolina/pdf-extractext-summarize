@@ -12,8 +12,6 @@ import logging
 
 import httpx
 
-from pdf_summarize.infrastructure.consul import ConsulResolver
-
 from pdf_summarize.domain.errors import (
     ExtractionFailedError,
     ExtractUnavailableError,
@@ -21,6 +19,7 @@ from pdf_summarize.domain.errors import (
     UnsupportedMediaTypeError,
 )
 from pdf_summarize.domain.models import ExtractionResult
+from pdf_summarize.infrastructure.consul import ConsulResolver
 
 logger = logging.getLogger("pdf_summarize.extract_client")
 
