@@ -43,11 +43,25 @@ vida. Consul ejecuta health checks HTTP. Summarize consulta el catálogo de
 instancias saludables antes de invocar Validation, Extract y Persistence; si
 Consul no está disponible o no hay instancias saludables, usa la URL fallback.
 
-## SAGA y orquestación
+## SAGA con orquestador
 
-`SummarizeUseCase` es un orquestador del flujo Validation → Extract → LLM →
-Persistence. Sin embargo, el flujo actual no implementa una SAGA completa con
-acciones compensatorias: Persistence es el único paso con efecto de escritura
-y se ejecuta al final. No se debe presentar esta orquestación como una SAGA
-completa. Para cumplir ese patrón estrictamente, el flujo debe incorporar
-estados persistidos y compensaciones explícitas ante fallos parciales.
+`SummarizeUseCase` implementa la coordinación centralizada de la SAGA:
+
+1. **Validation:** valida el PDF y obtiene el checksum que identifica la operación.
+2. **Reserva:** Persistence crea un registro con `saga_status=PENDING` y el
+   `request_id` como `saga_id`.
+3. **Extract:** obtiene el texto del PDF.
+4. **LLM:** genera el resumen.
+5. **Confirmación:** Persistence actualiza el registro con los datos finales y
+   `saga_status=COMPLETED`.
+
+Si falla Extract, LLM o la confirmación final, el orquestador ejecuta la
+compensación llamando a `DELETE /documents/{checksum}`. Persistence realiza
+una eliminación lógica, por lo que no se pierde evidencia del intento. Si la
+compensación también falla, el error original se conserva y se registra el
+evento `saga_compensation_failed`; el registro queda en estado PENDING para
+reconciliación operativa.
+
+La reserva y la confirmación son idempotentes por checksum y `saga_id`. La
+SAGA coordina los servicios mediante HTTP y no requiere una transacción
+distribuida ni una base de datos compartida.
