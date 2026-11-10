@@ -17,7 +17,6 @@ from pdf_summarize.domain.errors import (
     LLMTimeoutError,
     PdfTooLargeError,
     PersistenceConflictError,
-    PersistenceRejectedError,
     PersistenceUnavailableError,
     UnsupportedMediaTypeError,
     ValidationRejectedError,
