@@ -1,8 +1,4 @@
-"""Cliente HTTP con reintentos acotados y Circuit Breaker.
-
-Se utiliza para dependencias internas idempotentes o de solo lectura.
-No se aplica al proveedor LLM para evitar repetir operaciones facturables.
-"""
+"""Cliente HTTP con reintentos acotados y Circuit Breaker."""
 
 import asyncio
 import time
@@ -42,12 +38,25 @@ class ResilientHttpClient:
         self._lock = asyncio.Lock()
 
     async def post(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Ejecuta POST con reintentos ante fallos transitorios."""
-        await self._allow_request(url)
+        """Ejecuta POST con Retry y Circuit Breaker."""
+        return await self.request("POST", url, **kwargs)
+
+    async def put(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Ejecuta PUT con Retry y Circuit Breaker."""
+        return await self.request("PUT", url, **kwargs)
+
+    async def delete(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Ejecuta DELETE con Retry y Circuit Breaker."""
+        return await self.request("DELETE", url, **kwargs)
+
+    async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Ejecuta un método HTTP con reintentos ante fallos transitorios."""
+        method = method.upper()
+        await self._allow_request(method, url)
         try:
             for attempt in range(self._max_attempts):
                 try:
-                    response = await self._client.post(url, **kwargs)
+                    response = await self._client.request(method, url, **kwargs)
                 except httpx.TransportError:
                     if attempt + 1 >= self._max_attempts:
                         raise
@@ -74,13 +83,13 @@ class ResilientHttpClient:
             await self._record_failure()
             raise
 
-    async def _allow_request(self, url: str) -> None:
+    async def _allow_request(self, method: str, url: str) -> None:
         async with self._lock:
             if self._opened_at is None:
                 return
             elapsed = time.monotonic() - self._opened_at
             if elapsed < self._recovery_timeout or self._probe_in_flight:
-                request = httpx.Request("POST", url)
+                request = httpx.Request(method, url)
                 raise CircuitOpenError("Circuit Breaker abierto", request=request)
             self._probe_in_flight = True
 
