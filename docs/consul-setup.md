@@ -31,6 +31,12 @@ Iniciar Consul desde el repositorio Summarize:
 docker compose -f docker-compose.ecosystem.yml up -d consul
 ```
 
+Configurar la dirección del agente Consul para los siguientes Compose:
+
+```powershell
+$env:CONSUL_HTTP_ADDR = "http://consul:8500"
+```
+
 Iniciar Extract:
 
 ```powershell
