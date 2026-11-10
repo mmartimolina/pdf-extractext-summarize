@@ -64,3 +64,24 @@ async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion(monkeypatch)
     assert recovered.status_code == 200
     assert calls == 2
     await client.aclose()
+
+
+
+@pytest.mark.asyncio
+async def test_admite_put_y_delete_con_la_misma_capa_resiliente() -> None:
+    methods = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        return httpx.Response(200, request=request)
+
+    raw = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = ResilientHttpClient(raw, retry_delay=0)
+
+    put_response = await client.put("http://dependency.test/documents/1", json={"ok": True})
+    delete_response = await client.delete("http://dependency.test/documents/1")
+
+    assert put_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert methods == ["PUT", "DELETE"]
+    await client.aclose()
