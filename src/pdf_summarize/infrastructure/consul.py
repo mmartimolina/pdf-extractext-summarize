@@ -24,6 +24,7 @@ class ConsulRegistration:
         self.port = port
         self.health_path = health_path
         self.enabled = bool(self.address)
+        self.registered = False
 
     async def register(self) -> None:
         if not self.enabled:
@@ -41,11 +42,15 @@ class ConsulRegistration:
                 "DeregisterCriticalServiceAfter": "1m",
             },
         }
-        await asyncio.to_thread(self._request, "PUT", "/v1/agent/service/register", payload)
-        logger.info("consul_service_registered service=%s id=%s", self.service_name, self.service_id)
+        try:
+            await asyncio.to_thread(self._request, "PUT", "/v1/agent/service/register", payload)
+            self.registered = True
+            logger.info("consul_service_registered service=%s id=%s", self.service_name, self.service_id)
+        except Exception:
+            logger.exception("consul_service_registration_failed service=%s", self.service_name)
 
     async def deregister(self) -> None:
-        if not self.enabled:
+        if not self.enabled or not self.registered:
             return
         try:
             await asyncio.to_thread(
