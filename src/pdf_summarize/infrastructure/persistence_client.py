@@ -50,8 +50,14 @@ class PersistenceClient:
                 metadata = response.json().get("metadata") or {}
             except (ValueError, AttributeError):
                 metadata = {}
-            if metadata.get("saga_id") == request_id and metadata.get("saga_status") == "PENDING":
+            if (
+                metadata.get("saga_id") == request_id
+                and metadata.get("saga_status") == "PENDING"
+            ):
                 return
+            raise PersistenceConflictError(
+                "El checksum ya está reservado por otra operación o SAGA."
+            )
         raise self._map_error(response)
 
     async def save(self, record: DocumentRecord, request_id: str) -> None:
