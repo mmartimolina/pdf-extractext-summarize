@@ -34,7 +34,7 @@ docker compose -f docker-compose.ecosystem.yml up -d consul
 Iniciar Extract:
 
 ```powershell
-docker compose up -d --build
+docker compose up -d --build --scale extract=3
 ```
 
 Iniciar Validation en el puerto de host 8001 para evitar el conflicto con
