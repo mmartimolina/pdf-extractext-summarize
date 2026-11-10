@@ -68,3 +68,38 @@ class ConsulRegistration:
                 return
         except (urllib.error.URLError, TimeoutError) as exc:
             raise RuntimeError(f"Consul no disponible: {exc}") from exc
+
+
+class ConsulResolver:
+    """Resuelve instancias saludables desde el catálogo de Consul."""
+
+    def __init__(self, address: str | None = None) -> None:
+        self.address = (address if address is not None else os.environ.get("CONSUL_HTTP_ADDR", "")).rstrip("/")
+
+    async def resolve(self, service_name: str, fallback_url: str) -> str:
+        """Devuelve una instancia saludable o conserva la URL configurada."""
+        if not self.address:
+            return fallback_url.rstrip("/")
+        try:
+            entries = await asyncio.to_thread(self._lookup, service_name)
+            if not entries:
+                logger.warning("consul_no_healthy_instances service=%s", service_name)
+                return fallback_url.rstrip("/")
+            service = entries[0].get("Service", {})
+            node = entries[0].get("Node", {})
+            host = service.get("Address") or node.get("Address")
+            port = service.get("Port")
+            if not host or not port:
+                return fallback_url.rstrip("/")
+            return f"http://{host}:{port}"
+        except Exception:
+            logger.exception("consul_lookup_failed service=%s", service_name)
+            return fallback_url.rstrip("/")
+
+    def _lookup(self, service_name: str) -> list[dict]:
+        request = urllib.request.Request(
+            f"{self.address}/v1/health/service/{service_name}?passing=true",
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
