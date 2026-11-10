@@ -12,6 +12,8 @@ import logging
 
 import httpx
 
+from pdf_summarize.infrastructure.consul import ConsulResolver
+
 from pdf_summarize.domain.errors import (
     ExtractionFailedError,
     ExtractUnavailableError,
@@ -26,15 +28,23 @@ logger = logging.getLogger("pdf_summarize.extract_client")
 class ExtractClient:
     """Adaptador del puerto ``Extractor`` sobre HTTP."""
 
-    def __init__(self, http: httpx.AsyncClient, base_url: str) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, base_url: str, resolver: ConsulResolver | None = None
+    ) -> None:
         self._http = http
         self._base_url = base_url.rstrip("/")
+        self._resolver = resolver
 
     async def extract(self, pdf_bytes: bytes, request_id: str) -> ExtractionResult:
         """Extrae el texto del PDF mediante el microservicio Extract."""
+        base_url = (
+            await self._resolver.resolve("extract", self._base_url)
+            if self._resolver is not None
+            else self._base_url
+        )
         try:
             response = await self._http.post(
-                f"{self._base_url}/extract",
+                f"{base_url}/extract",
                 content=pdf_bytes,
                 headers={
                     "Content-Type": "application/pdf",
