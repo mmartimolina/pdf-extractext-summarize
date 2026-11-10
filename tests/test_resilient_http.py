@@ -1,5 +1,7 @@
 """Pruebas del cliente HTTP resiliente."""
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -45,7 +47,7 @@ async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion() -> None:
         raw,
         max_attempts=1,
         failure_threshold=1,
-        recovery_timeout=0,
+        recovery_timeout=0.05,
     )
 
     first = await client.post("http://dependency.test/operation")
@@ -54,6 +56,7 @@ async def test_circuit_breaker_abre_y_permite_sonda_de_recuperacion() -> None:
     with pytest.raises(CircuitOpenError):
         await client.post("http://dependency.test/operation")
 
+    await asyncio.sleep(0.06)
     recovered = await client.post("http://dependency.test/operation")
     assert recovered.status_code == 200
     assert calls == 2
