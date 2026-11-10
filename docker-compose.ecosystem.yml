@@ -20,11 +20,8 @@ services:
   consul:
     image: consul:1.19.2
     command: ["agent", "-dev", "-client=0.0.0.0", "-ui"]
-    expose:
-      - "8500"
-    depends_on:
-      consul:
-        condition: service_healthy
+    ports:
+      - "8500:8500"
     healthcheck:
       test: ["CMD", "consul", "members"]
       interval: 5s
@@ -49,8 +46,13 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
       CONSUL_HTTP_ADDR: "http://consul:8500"
       SERVICE_ADDRESS: "pdf-summarize"
+      RATE_LIMIT_REQUESTS: "${RATE_LIMIT_REQUESTS:-60}"
+      RATE_LIMIT_WINDOW_SECONDS: "${RATE_LIMIT_WINDOW_SECONDS:-60}"
     expose:
       - "8000"
+    depends_on:
+      consul:
+        condition: service_healthy
     healthcheck:
       test:
         [
