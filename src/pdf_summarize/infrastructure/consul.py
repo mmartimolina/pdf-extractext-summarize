@@ -21,7 +21,7 @@ class ConsulRegistration:
         self.service_id = os.environ.get(
             "CONSUL_SERVICE_ID", f"{service_name}-{socket.gethostname()}"
         )
-        self.service_address = os.environ.get("SERVICE_ADDRESS", service_name)
+        self.service_address = os.environ.get("SERVICE_ADDRESS") or socket.gethostbyname(socket.gethostname())
         self.port = port
         self.health_path = health_path
         self.enabled = bool(self.address)
