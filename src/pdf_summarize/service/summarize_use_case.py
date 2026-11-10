@@ -76,7 +76,9 @@ class SummarizeUseCase:
 
             # Confirmación: PENDING → COMPLETED.
             await self._persistence.save(record, request_id)
-            logger.info("saga_completed request_id=%s checksum=%s", request_id, checksum)
+            logger.info(
+                "saga_completed request_id=%s checksum=%s", request_id, checksum
+            )
             return result
         except Exception:
             if reservation_started and checksum is not None:
