@@ -5,7 +5,11 @@ original) se configura mediante variables de entorno y es intercambiable
 por cualquier API compatible con ``chat/completions``.
 """
 
+import hashlib
 import logging
+import os
+import time
+from collections import OrderedDict
 
 import httpx
 
@@ -36,6 +40,11 @@ class LLMClient:
         self._api_key = api_key
         self._model = model
         self._max_tokens = max_tokens
+        self._cache_ttl = float(os.environ.get("LLM_CACHE_TTL_SECONDS", "300"))
+        self._cache_max_entries = int(os.environ.get("LLM_CACHE_MAX_ENTRIES", "256"))
+        if self._cache_ttl < 0 or self._cache_max_entries < 1:
+            raise ValueError("La configuración de caché LLM no es válida")
+        self._summary_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
 
     @property
     def model_name(self) -> str:
@@ -51,6 +60,17 @@ class LLMClient:
         """
         if not self._api_key:
             raise LLMNotConfiguredError()
+
+        cache_key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        cached = self._summary_cache.get(cache_key)
+        now = time.monotonic()
+        if cached is not None:
+            expires_at, cached_summary = cached
+            if expires_at > now:
+                self._summary_cache.move_to_end(cache_key)
+                logger.info("llm_cache_hit")
+                return cached_summary
+            self._summary_cache.pop(cache_key, None)
 
         payload = {
             "model": self._model,
@@ -84,7 +104,13 @@ class LLMClient:
             logger.warning("llm_unexpected_status status=%d", response.status_code)
             raise LLMProviderError(f"estado {response.status_code}")
 
-        return self._parse_summary(response)
+        summary = self._parse_summary(response)
+        if self._cache_ttl > 0:
+            self._summary_cache[cache_key] = (time.monotonic() + self._cache_ttl, summary)
+            self._summary_cache.move_to_end(cache_key)
+            while len(self._summary_cache) > self._cache_max_entries:
+                self._summary_cache.popitem(last=False)
+        return summary
 
     async def aclose(self) -> None:
         """Cierra el cliente HTTP subyacente."""

@@ -412,6 +412,25 @@ class TestLLMClient:
         assert seen["payload"]["messages"][0]["content"] == "prompt de prueba"
         await client.aclose()
 
+    async def test_cache_reuses_successful_summary_for_same_prompt(self):
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "Resumen cacheado."}}]},
+            )
+
+        client = self.make_client(handler)
+        first = await client.summarize("mismo prompt")
+        second = await client.summarize("mismo prompt")
+
+        assert first == second == "Resumen cacheado."
+        assert calls == 1
+        await client.aclose()
+
     async def test_model_name_property(self):
         client = self.make_client(lambda r: httpx.Response(200, json={}))
         assert client.model_name == "meta/llama-3.1-8b-instruct"

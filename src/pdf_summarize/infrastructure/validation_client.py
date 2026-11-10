@@ -21,6 +21,7 @@ from pdf_summarize.domain.errors import (
     ValidationUnavailableError,
 )
 from pdf_summarize.domain.models import ValidationReport
+from pdf_summarize.infrastructure.consul import ConsulResolver
 
 logger = logging.getLogger("pdf_summarize.validation_client")
 
@@ -28,15 +29,23 @@ logger = logging.getLogger("pdf_summarize.validation_client")
 class ValidationClient:
     """Adaptador del puerto ``Validator`` sobre HTTP."""
 
-    def __init__(self, http: httpx.AsyncClient, base_url: str) -> None:
+    def __init__(
+        self, http: httpx.AsyncClient, base_url: str, resolver: ConsulResolver | None = None
+    ) -> None:
         self._http = http
         self._base_url = base_url.rstrip("/")
+        self._resolver = resolver
 
     async def validate(self, pdf_bytes: bytes, request_id: str) -> ValidationReport:
         """Valida el PDF y devuelve el informe con el checksum."""
+        base_url = (
+            await self._resolver.resolve("pdf-validation", self._base_url)
+            if self._resolver is not None
+            else self._base_url
+        )
         try:
             response = await self._http.post(
-                f"{self._base_url}/validate",
+                f"{base_url}/validate",
                 content=pdf_bytes,
                 headers={
                     "Content-Type": "application/pdf",

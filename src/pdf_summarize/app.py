@@ -10,9 +10,11 @@ from pdf_summarize.api.middleware import (
     ObservabilityMiddleware,
     RequestIdMiddleware,
 )
+from pdf_summarize.api.rate_limit import RateLimitMiddleware
 from pdf_summarize.api.routes import router
 from pdf_summarize.config import Settings
 from pdf_summarize.container import Container
+from pdf_summarize.infrastructure.consul import ConsulRegistration
 
 logger = logging.getLogger("pdf_summarize.app")
 
@@ -21,10 +23,15 @@ logger = logging.getLogger("pdf_summarize.app")
 async def _lifespan(app: FastAPI):
     """Crea y destruye las dependencias externas de la aplicación."""
     container: Container = app.state.container
+    consul = ConsulRegistration("pdf-summarize", 8000, "/health/live")
     logger.info("startup")
-    yield
-    await container.aclose()
-    logger.info("shutdown")
+    await consul.register()
+    try:
+        yield
+    finally:
+        await consul.deregister()
+        await container.aclose()
+        logger.info("shutdown")
 
 
 def create_app(
@@ -54,5 +61,6 @@ def create_app(
     app.include_router(router)
     app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(RateLimitMiddleware)
     register_exception_handlers(app)
     return app

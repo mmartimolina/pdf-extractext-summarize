@@ -9,9 +9,11 @@ import httpx
 
 from pdf_summarize.config import Settings
 from pdf_summarize.domain.ports import Extractor, Persister, Summarizer, Validator
+from pdf_summarize.infrastructure.consul import ConsulResolver
 from pdf_summarize.infrastructure.extract_client import ExtractClient
 from pdf_summarize.infrastructure.llm_client import LLMClient
 from pdf_summarize.infrastructure.persistence_client import PersistenceClient
+from pdf_summarize.infrastructure.resilient_http import ResilientHttpClient
 from pdf_summarize.infrastructure.validation_client import ValidationClient
 from pdf_summarize.service.summarize_use_case import SummarizeUseCase
 
@@ -43,13 +45,16 @@ class Container:
         upstream_timeout = httpx.Timeout(settings.upstream_timeout_seconds)
         llm_timeout = httpx.Timeout(settings.llm_timeout_seconds)
 
+        resolver = ConsulResolver()
         validation_client = ValidationClient(
-            httpx.AsyncClient(timeout=upstream_timeout),
+            ResilientHttpClient(httpx.AsyncClient(timeout=upstream_timeout)),
             settings.validation_service_url,
+            resolver,
         )
         extract_client = ExtractClient(
-            httpx.AsyncClient(timeout=upstream_timeout),
+            ResilientHttpClient(httpx.AsyncClient(timeout=upstream_timeout)),
             settings.extract_service_url,
+            resolver,
         )
         llm_client = LLMClient(
             httpx.AsyncClient(timeout=llm_timeout),
@@ -59,8 +64,9 @@ class Container:
             settings.llm_max_tokens,
         )
         persistence_client = PersistenceClient(
-            httpx.AsyncClient(timeout=upstream_timeout),
+            ResilientHttpClient(httpx.AsyncClient(timeout=upstream_timeout)),
             settings.persistence_service_url,
+            resolver,
         )
         return cls(
             validation_client=validation_client,

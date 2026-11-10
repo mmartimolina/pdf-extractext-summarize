@@ -17,6 +17,19 @@
 #   - pdf-persistence (microservicio Persistence, puerto 8003)
 
 services:
+  consul:
+    image: consul:1.19.2
+    command: ["agent", "-dev", "-client=0.0.0.0", "-ui"]
+    ports:
+      - "8500:8500"
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pdf-ecosystem
+
   pdf-summarize:
     build: .
     environment:
@@ -29,10 +42,20 @@ services:
       LLM_MODEL: "${LLM_MODEL:-meta/llama-3.1-8b-instruct}"
       LLM_TIMEOUT_SECONDS: "${LLM_TIMEOUT_SECONDS:-60}"
       LLM_MAX_TOKENS: "${LLM_MAX_TOKENS:-1000}"
+      LLM_CACHE_TTL_SECONDS: "${LLM_CACHE_TTL_SECONDS:-300}"
+      LLM_CACHE_MAX_ENTRIES: "${LLM_CACHE_MAX_ENTRIES:-256}"
       UPSTREAM_TIMEOUT_SECONDS: "${UPSTREAM_TIMEOUT_SECONDS:-30}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      CONSUL_HTTP_ADDR: "http://consul:8500"
+      RATE_LIMIT_REQUESTS: "${RATE_LIMIT_REQUESTS:-60}"
+      RATE_LIMIT_WINDOW_SECONDS: "${RATE_LIMIT_WINDOW_SECONDS:-60}"
+    ports:
+      - "${SUMMARIZE_PORT:-8002}:8000"
     expose:
       - "8000"
+    depends_on:
+      consul:
+        condition: service_healthy
     healthcheck:
       test:
         [
