@@ -259,112 +259,103 @@ class TestPersistenceClient:
         model="meta/llama-3.1-8b-instruct",
     )
 
-    EXPECTED_PAYLOAD: ClassVar[dict] = {
-        "checksum": "ab" * 32,
-        "checksum_algorithm": "sha256",
-        "text": "Texto extraído del documento.",
-        "summary": "Resumen generado.",
-        "page_count": 3,
-        "file_size_bytes": 1024,
-        "model": "meta/llama-3.1-8b-instruct",
-    }
-
     def make_client(self, handler):
         return PersistenceClient(async_client(handler), "http://pdf-persistence:8003")
 
-    async def test_created_201_sends_document_payload(self):
+    async def test_begin_creates_pending_reservation(self):
         seen = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
             seen["path"] = request.url.path
             seen["request_id"] = request.headers.get("x-request-id")
-            seen["content_type"] = request.headers.get("content-type")
             seen["payload"] = json.loads(request.content)
-            return httpx.Response(
-                201, json={"checksum": "ab" * 32, "created_at": "", "updated_at": ""}
-            )
+            return httpx.Response(201, json={})
+
+        client = self.make_client(handler)
+        await client.begin("ab" * 32, "sha256", "req-5")
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/documents"
+        assert seen["request_id"] == "req-5"
+        assert seen["payload"]["metadata"] == {
+            "saga_id": "req-5", "saga_status": "PENDING"
+        }
+        await client.aclose()
+
+    async def test_begin_accepts_same_pending_saga_idempotently(self):
+        client = self.make_client(lambda r: httpx.Response(
+            200, json={"metadata": {"saga_id": "req-5", "saga_status": "PENDING"}}
+        ))
+        await client.begin("ab" * 32, "sha256", "req-5")
+        await client.aclose()
+
+    async def test_begin_rejects_existing_document_owned_by_another_request(self):
+        client = self.make_client(lambda r: httpx.Response(
+            200, json={"metadata": {"saga_id": "other", "saga_status": "COMPLETED"}}
+        ))
+        with pytest.raises(PersistenceConflictError):
+            await client.begin("ab" * 32, "sha256", "req-5")
+        await client.aclose()
+
+    async def test_save_confirms_document_with_put(self):
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            seen["payload"] = json.loads(request.content)
+            return httpx.Response(200, json={})
 
         client = self.make_client(handler)
         await client.save(self.RECORD, request_id="req-5")
-
-        assert seen["path"] == "/documents"
-        assert seen["request_id"] == "req-5"
-        assert seen["content_type"].startswith("application/json")
-        assert seen["payload"] == self.EXPECTED_PAYLOAD
+        assert seen["method"] == "PUT"
+        assert seen["path"] == f"/documents/{'ab' * 32}"
+        assert seen["payload"]["summary"] == "Resumen generado."
+        assert seen["payload"]["metadata"] == {
+            "saga_id": "req-5", "saga_status": "COMPLETED"
+        }
         await client.aclose()
 
-    async def test_idempotent_200_is_also_success(self):
-        client = self.make_client(lambda r: httpx.Response(200, json={}))
-        await client.save(self.RECORD, request_id="req-5")
+    async def test_compensate_deletes_pending_document(self):
+        seen = {}
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["method"] = request.method
+            seen["path"] = request.url.path
+            return httpx.Response(200, json={})
+
+        client = self.make_client(handler)
+        await client.compensate("ab" * 32, "req-5")
+        assert seen == {"method": "DELETE", "path": f"/documents/{'ab' * 32}"}
+        await client.aclose()
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504])
     async def test_server_errors_map_to_unavailable(self, status):
-        client = self.make_client(
-            lambda r: httpx.Response(
-                status, json={"error": {"code": "MONGO_UNAVAILABLE", "message": "x"}}
-            )
-        )
+        client = self.make_client(lambda r: httpx.Response(
+            status, json={"error": {"code": "MONGO_UNAVAILABLE", "message": "x"}}
+        ))
         with pytest.raises(PersistenceUnavailableError):
-            await client.save(self.RECORD, request_id="req-5")
+            await client.begin("ab" * 32, "sha256", "req-5")
 
-    async def test_conflict_409_maps_to_conflict_with_upstream_message(self):
-        client = self.make_client(
-            lambda r: httpx.Response(
-                409,
-                json={
-                    "error": {
-                        "code": "DOCUMENT_ALREADY_EXISTS",
-                        "message": "Ya existe un documento con datos distintos.",
-                    }
-                },
-            )
-        )
-        with pytest.raises(PersistenceConflictError) as excinfo:
-            await client.save(self.RECORD, request_id="req-5")
-        assert "datos distintos" in excinfo.value.message
-
-    @pytest.mark.parametrize(
-        ("status", "payload"),
-        [
-            (422, {"error": {"code": "VALIDATION", "message": "checksum inválido"}}),
-            (400, {"error": {"code": "BAD", "message": "solicitud inválida"}}),
-        ],
-    )
-    async def test_client_rejections_map_to_rejected(self, status, payload):
-        client = self.make_client(lambda r: httpx.Response(status, json=payload))
-        with pytest.raises(PersistenceRejectedError):
-            await client.save(self.RECORD, request_id="req-5")
+    async def test_conflict_409_maps_to_conflict(self):
+        client = self.make_client(lambda r: httpx.Response(
+            409, json={"error": {"code": "DOCUMENT_ALREADY_EXISTS", "message": "conflicto"}}
+        ))
+        with pytest.raises(PersistenceConflictError):
+            await client.begin("ab" * 32, "sha256", "req-5")
 
     async def test_connect_error_maps_to_unavailable(self):
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("refused")
-
         client = self.make_client(handler)
         with pytest.raises(PersistenceUnavailableError):
-            await client.save(self.RECORD, request_id="req-5")
+            await client.begin("ab" * 32, "sha256", "req-5")
 
     async def test_timeout_maps_to_unavailable(self):
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("expired")
-
         client = self.make_client(handler)
         with pytest.raises(PersistenceUnavailableError):
-            await client.save(self.RECORD, request_id="req-5")
-
-    async def test_unexpected_status_maps_to_rejected(self):
-        client = self.make_client(lambda r: httpx.Response(418, json={}))
-        with pytest.raises(PersistenceRejectedError):
-            await client.save(self.RECORD, request_id="req-5")
-
-    async def test_malformed_server_error_maps_to_unavailable(self):
-        client = self.make_client(lambda r: httpx.Response(503, text="no-json"))
-        with pytest.raises(PersistenceUnavailableError):
-            await client.save(self.RECORD, request_id="req-5")
-
-    async def test_malformed_conflict_body_maps_to_conflict(self):
-        client = self.make_client(lambda r: httpx.Response(409, text="no-json"))
-        with pytest.raises(PersistenceConflictError):
-            await client.save(self.RECORD, request_id="req-5")
+            await client.begin("ab" * 32, "sha256", "req-5")
 
 
 class TestLLMClient:
