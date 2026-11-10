@@ -242,7 +242,7 @@ class TestPersistenceStep:
         assert len(persistence.calls) == 1
         assert len(persistence.compensations) == 1
 
-    async def test_persistence_not_called_when_llm_fails(self):
+    async def test_reservation_is_compensated_when_llm_fails(self):
         persistence = FakePersistenceClient()
         use_case = build_use_case(
             llm=FakeLLMClient(error=LLMAuthError("401")),
@@ -250,12 +250,8 @@ class TestPersistenceStep:
         )
         with pytest.raises(LLMAuthError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
-        assert persistence.begins == []
-        assert persistence.begins == []
-        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert persistence.calls == []
-        assert persistence.compensations == [("deadbeef", "req-1")]
         assert persistence.compensations == [("deadbeef", "req-1")]
 
     async def test_persistence_not_called_when_validation_fails(self):
@@ -268,9 +264,11 @@ class TestPersistenceStep:
         )
         with pytest.raises(ValidationRejectedError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.begins == []
         assert persistence.calls == []
+        assert persistence.compensations == []
 
-    async def test_persistence_not_called_when_extract_fails(self):
+    async def test_reservation_is_compensated_when_extract_fails(self):
         persistence = FakePersistenceClient()
         use_case = build_use_case(
             extract=FakeExtractClient(error=ExtractUnavailableError("down")),
@@ -278,9 +276,11 @@ class TestPersistenceStep:
         )
         with pytest.raises(ExtractUnavailableError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert persistence.calls == []
+        assert persistence.compensations == [("deadbeef", "req-1")]
 
-    async def test_persistence_not_called_when_no_useful_text(self):
+    async def test_reservation_is_compensated_when_text_is_not_useful(self):
         persistence = FakePersistenceClient()
         use_case = build_use_case(
             extract=FakeExtractClient(ExtractionResult(content="", page_count=3)),
@@ -288,8 +288,9 @@ class TestPersistenceStep:
         )
         with pytest.raises(NoUsefulTextError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert persistence.calls == []
-
+        assert persistence.compensations == [("deadbeef", "req-1")]
 
 class TestLLMStep:
     async def test_llm_auth_error_propagates(self):
