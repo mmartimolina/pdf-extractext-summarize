@@ -65,14 +65,25 @@ class FakeLLMClient:
 
 
 class FakePersistenceClient:
-    def __init__(self, error=None):
+    def __init__(self, error=None, save_error=None):
         self._error = error
+        self._save_error = save_error
+        self.begins = []
         self.calls = []
+        self.compensations = []
+
+    async def begin(self, checksum, checksum_algorithm, request_id):
+        self.begins.append((checksum, checksum_algorithm, request_id))
+        if self._error:
+            raise self._error
 
     async def save(self, record, request_id):
         self.calls.append((record, request_id))
-        if self._error:
-            raise self._error
+        if self._save_error:
+            raise self._save_error
+
+    async def compensate(self, checksum, request_id):
+        self.compensations.append((checksum, request_id))
 
 
 def build_use_case(
@@ -199,7 +210,9 @@ class TestPersistenceStep:
         use_case = build_use_case(persistence=persistence)
         result = await use_case.execute(b"%PDF-fake", request_id="req-1")
 
+        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert len(persistence.calls) == 1
+        assert persistence.compensations == []
         record, request_id = persistence.calls[0]
         assert record.checksum == "deadbeef"
         assert record.checksum_algorithm == "sha256"
@@ -212,20 +225,22 @@ class TestPersistenceStep:
 
     async def test_persistence_unavailable_propagates(self):
         persistence = FakePersistenceClient(
-            error=PersistenceUnavailableError("connection refused")
+            save_error=PersistenceUnavailableError("connection refused")
         )
         use_case = build_use_case(persistence=persistence)
         with pytest.raises(PersistenceUnavailableError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.compensations == [("deadbeef", "req-1")]
 
-    async def test_persistence_fails_once_without_retry(self):
+    async def test_persistence_fails_once_and_compensates(self):
         persistence = FakePersistenceClient(
-            error=PersistenceUnavailableError("connection refused")
+            save_error=PersistenceUnavailableError("connection refused")
         )
         use_case = build_use_case(persistence=persistence)
         with pytest.raises(PersistenceUnavailableError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
         assert len(persistence.calls) == 1
+        assert len(persistence.compensations) == 1
 
     async def test_persistence_not_called_when_llm_fails(self):
         persistence = FakePersistenceClient()
@@ -235,7 +250,13 @@ class TestPersistenceStep:
         )
         with pytest.raises(LLMAuthError):
             await use_case.execute(b"%PDF-fake", request_id="req-1")
+        assert persistence.begins == []
+        assert persistence.begins == []
+        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
+        assert persistence.begins == [("deadbeef", "sha256", "req-1")]
         assert persistence.calls == []
+        assert persistence.compensations == [("deadbeef", "req-1")]
+        assert persistence.compensations == [("deadbeef", "req-1")]
 
     async def test_persistence_not_called_when_validation_fails(self):
         persistence = FakePersistenceClient()
