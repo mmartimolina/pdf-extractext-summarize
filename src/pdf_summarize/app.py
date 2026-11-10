@@ -10,8 +10,8 @@ from pdf_summarize.api.middleware import (
     ObservabilityMiddleware,
     RequestIdMiddleware,
 )
-from pdf_summarize.api.routes import router
 from pdf_summarize.api.rate_limit import RateLimitMiddleware
+from pdf_summarize.api.routes import router
 from pdf_summarize.config import Settings
 from pdf_summarize.container import Container
 from pdf_summarize.infrastructure.consul import ConsulRegistration
