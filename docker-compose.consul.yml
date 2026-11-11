@@ -1,0 +1,28 @@
+﻿services:
+  consul:
+    image: hashicorp/consul:1.22
+    container_name: consul
+    command:
+      - agent
+      - -client=0.0.0.0
+      - -ui
+      - -config-dir=/consul/config
+    ports:
+      - "8500:8500"
+    volumes:
+      - ./infra/consul:/consul/config
+      - consul-data:/consul/data
+    networks:
+      - pdf-ecosystem-net
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+networks:
+  pdf-ecosystem-net:
+    external: true
+    name: pdf-ecosystem-net
+
+volumes:
+  consul-data:
+    external: true
+    name: consul-data

@@ -22,7 +22,7 @@ services:
     environment:
       MAX_PDF_SIZE_MIB: "${MAX_PDF_SIZE_MIB:-20}"
       VALIDATION_SERVICE_URL: "${VALIDATION_SERVICE_URL:-http://pdf-validation:8000}"
-      EXTRACT_SERVICE_URL: "${EXTRACT_SERVICE_URL:-http://extract:8000}"
+      EXTRACT_SERVICE_URL: "${EXTRACT_SERVICE_URL:-http://nginx:8000}"
       PERSISTENCE_SERVICE_URL: "${PERSISTENCE_SERVICE_URL:-http://pdf-persistence:8003}"
       LLM_BASE_URL: "${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}"
       LLM_API_KEY: "${LLM_API_KEY:-}"

@@ -73,7 +73,7 @@ reenviar manualmente la misma solicitud sin duplicados.
 | `LLM_TIMEOUT_SECONDS` | `60` | Timeout de la llamada al proveedor. |
 | `LLM_MAX_TOKENS` | `1000` | Longitud máxima de salida. |
 | `VALIDATION_SERVICE_URL` | `http://pdf-validation:8000` | URL base de Validation. |
-| `EXTRACT_SERVICE_URL` | `http://extract:8000` | URL base de Extract. |
+| `EXTRACT_SERVICE_URL` | `http://nginx:8000` | URL base de Extract. |
 | `PERSISTENCE_SERVICE_URL` | `http://pdf-persistence:8003` | URL base de Persistence. |
 | `UPSTREAM_TIMEOUT_SECONDS` | `30` | Timeout hacia los microservicios. |
 | `MAX_PDF_SIZE_MIB` | `20` | Tamaño máximo aceptado del PDF. |
@@ -134,6 +134,49 @@ Los demás servicios deben declarar la misma red externa en su compose.
 Los nombres DNS por defecto (`pdf-validation`, `extract`,
 `pdf-persistence` en el puerto 8003) derivan de los
 `docker-compose.yml` reales de cada repositorio.
+
+### Consul (service discovery)
+
+Este repositorio administra la infraestructura de Consul del ecosistema:
+
+- `infra/consul/server.hcl` — agente servidor único con UI y ACL habilitadas
+  (`default_policy = "allow"`, persistencia de tokens activada).
+- `infra/consul/services.json` — registro **estático** de las instancias únicas
+  (`pdf-validation`, `pdf-summarize`, `pdf-persistence`, `pdf-extract`) con
+  healthchecks HTTP cada 10 s.
+- `infra/service-registration-policy.hcl` — política ACL
+  `pdf-service-registration` que permite a los servicios registrarse a sí mismos.
+- `docker-compose.consul.yml` — levanta el servidor Consul en la red compartida
+  con volumen persistente `consul-data`.
+
+```bash
+docker network create pdf-ecosystem-net
+docker volume create consul-data
+docker compose -f docker-compose.consul.yml up -d
+```
+
+El registro **dinámico** lo realizan las réplicas de `extract` desde su propio
+código (`src/consul.py` en el repositorio extract): cada réplica se registra con
+su IP de contenedor, un ID único `extract-<hostname>` y un healthcheck contra
+`/health`; al detenerse se desregistra. Si Consul no está disponible, el
+servicio sigue operativo (registro fail-soft con reintentos). Los demás
+servicios, por ser instancias únicas, usan el registro estático de
+`services.json` y no requieren lógica de descubrimiento en el código.
+
+### Levantar el ecosistema completo
+
+```bash
+# 1. red y volumen compartidos (solo la primera vez)
+docker network create pdf-ecosystem-net
+docker volume create consul-data
+# 2. Consul
+docker compose -f docker-compose.consul.yml up -d
+# 3. cada servicio, desde su repositorio
+#    (pdf-extractext-extract, ../pdf-extractext-validation,
+#     ../pdf-extractext-persistence y este repo)
+docker compose up -d --build
+# 4. catálogo y salud en http://localhost:8500
+```
 
 ## Pruebas de carga
 

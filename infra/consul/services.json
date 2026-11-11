@@ -1,0 +1,48 @@
+{
+  "services": [
+    {
+      "id": "pdf-extract",
+      "name": "pdf-extract",
+      "address": "extract",
+      "port": 8000,
+      "check": {
+        "http": "http://extract:8000/health",
+        "interval": "10s",
+        "timeout": "3s"
+      }
+    },
+    {
+      "id": "pdf-validation",
+      "name": "pdf-validation",
+      "address": "pdf-validation",
+      "port": 8000,
+      "check": {
+        "http": "http://pdf-validation:8000/health/ready",
+        "interval": "10s",
+        "timeout": "3s"
+      }
+    },
+    {
+      "id": "pdf-summarize",
+      "name": "pdf-summarize",
+      "address": "pdf-summarize",
+      "port": 8000,
+      "check": {
+        "http": "http://pdf-summarize:8000/health/ready",
+        "interval": "10s",
+        "timeout": "3s"
+      }
+    },
+    {
+      "id": "pdf-persistence",
+      "name": "pdf-persistence",
+      "address": "pdf-persistence",
+      "port": 8003,
+      "check": {
+        "http": "http://pdf-persistence:8003/health/ready",
+        "interval": "10s",
+        "timeout": "3s"
+      }
+    }
+  ]
+}
