@@ -2,7 +2,11 @@
 
 from typing import Protocol
 
-from pdf_summarize.domain.models import DocumentRecord, ExtractionResult, ValidationReport
+from pdf_summarize.domain.models import (
+    DocumentRecord,
+    ExtractionResult,
+    ValidationReport,
+)
 
 
 class Validator(Protocol):
@@ -19,11 +23,12 @@ class Summarizer(Protocol):
 
     async def summarize(self, prompt: str) -> str: ...
 
-
 class Persister(Protocol):
     """Puerto de Persistence con operaciones de SAGA y compensación."""
 
-    async def begin(self, checksum: str, checksum_algorithm: str, request_id: str) -> None:
+    async def begin(
+        self, checksum: str, checksum_algorithm: str, request_id: str
+    ) -> None:
         """Reserva un documento en estado PENDING; es el primer paso con efecto."""
 
     async def save(self, record: DocumentRecord, request_id: str) -> None:
